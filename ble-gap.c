@@ -9,11 +9,11 @@
  *
  */
 
+#include "ble-gap.h"
+
 #include <esp_gap_ble_api.h>  // Implements GATT Server configuration such as creating services and characteristics.
 #include <esp_log.h>
 #include <string.h>
-
-#include "ble-gap.h"
 
 #define RAW_ADV_DATA_SERVICE_UUID      0xED58  // Example service UUID
 #define RAW_ADV_DATA_SIZE              31
@@ -223,7 +223,6 @@ esp_err_t ble_gap_init(const char *device_name)
 {
   esp_err_t ret;
 
-  // Register GAP callback
   ret = esp_ble_gap_register_callback(gap_event_handler);
   if (ret)
   {
@@ -297,6 +296,28 @@ esp_err_t ble_gap_start_adv()
   if (ret)
   {
     ESP_LOGE(TAG_GAP, "Starting advertising failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  return ESP_OK;
+}
+
+esp_err_t ble_gap_update_connection_params(uint8_t *bda, uint16_t min_interval, uint16_t max_interval, uint16_t latency,
+                                           uint16_t timeout)
+{
+  esp_err_t ret;
+  esp_ble_conn_update_params_t conn_params = {
+    .min_int = min_interval,
+    .max_int = max_interval,
+    .latency = latency,
+    .timeout = timeout,
+  };
+  memcpy(conn_params.bda, bda, ESP_BD_ADDR_LEN);
+
+  ret = esp_ble_gap_update_conn_params(&conn_params);
+  if (ret)
+  {
+    ESP_LOGE(TAG_GAP, "Updating connection parameters failed: %s", esp_err_to_name(ret));
     return ret;
   }
 

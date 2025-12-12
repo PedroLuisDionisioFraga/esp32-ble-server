@@ -1,0 +1,42 @@
+{
+  "services": {
+    "0x00FF": {
+      "name": "Air Fryer Service",
+      "description": "Serviço principal do Air Fryer para controle e monitoramento"
+    },
+    "0xED58": {
+      "name": "Air Fryer Advertising Service",
+      "description": "UUID usado no advertising data"
+    },
+    "0xAFBD": {
+      "name": "Air Fryer Scan Response Service",
+      "description": "UUID usado no scan response data"
+    }
+  },
+  "characteristics": {
+    "0xFF01": {
+      "name": "Control",
+      "description": "Característica para controle do Air Fryer (leitura/escrita/notificação)"
+    }
+  },
+  "descriptors": {
+    "0x2901": {
+      "name": "Characteristic User Description",
+      "description": "Descritor padrão BLE para nome da característica"
+    },
+    "0x2902": {
+      "name": "Client Characteristic Configuration",
+      "description": "Descritor padrão BLE para configuração de notificações/indicações"
+    }
+  },
+  "standard_uuids": {
+    "0x1800": "Generic Access",
+    "0x1801": "Generic Attribute",
+    "0x180A": "Device Information",
+    "0x180F": "Battery Service",
+    "0x181A": "Environmental Sensing",
+    "0x2A00": "Device Name",
+    "0x2A01": "Appearance",
+    "0x2A29": "Manufacturer Name String"
+  }
+}

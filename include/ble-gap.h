@@ -18,4 +18,7 @@ esp_err_t ble_gap_init(const char *device_name);
 
 esp_err_t ble_gap_start_adv();
 
+esp_err_t ble_gap_update_connection_params(uint8_t *bda, uint16_t min_interval, uint16_t max_interval, uint16_t latency,
+                                           uint16_t timeout);
+
 #endif  // BLE_GAP_H

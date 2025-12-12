@@ -35,7 +35,7 @@ static const char *GATT_TAG = "BLE_GATT";
 // static uint16_t primary_service_uuid = ESP_GATT_UUID_PRI_SERVICE;  // 0x2800
 // static uint16_t my_service_uuid = 0x180A;                          // Example service UUID
 // static uint16_t char_decl_uuid = ESP_GATT_UUID_CHAR_DECLARE;       // 0x2803
-// static uint16_t my_char_uuid = 0x2A57;                             // Example characteristic UUID
+// static uint16_t my_characteristic_uuid = 0x2A57;                             // Example characteristic UUID
 
 // static uint8_t char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE;
 // static uint8_t char_value[5] = {'P', 'E', 'D', 'R', 'O'};         // Initial value
@@ -79,7 +79,7 @@ static const char *GATT_TAG = "BLE_GATT";
 //       .att_desc =
 //         {
 //           .uuid_length = ESP_UUID_LEN_16,
-//           .uuid_p = (uint8_t *)&my_char_uuid,
+//           .uuid_p = (uint8_t *)&my_characteristic_uuid,
 //           .perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 //           .max_length = sizeof(char_value),
 //           .length = sizeof(char_value),
@@ -106,8 +106,8 @@ static const char *GATT_TAG = "BLE_GATT";
 //                                         esp_ble_gatts_cb_param_t *param);
 
 // static uint8_t s_num_profiles = 0;
-// // static ble_profile_t *s_profiles = NULL;
-// static ble_profile_t s_profiles[MAX_PROFILES] = {
+// // static ble_gatts_profile_t *s_profiles = NULL;
+// static ble_gatts_profile_t s_profiles[MAX_PROFILES] = {
 //   [0] =
 //     {
 //       .gatts_cb = gatts_profile_event_handler, .gatts_if = ESP_GATT_IF_NONE, .profile_name = "Default Profile",
@@ -161,7 +161,7 @@ static const char *GATT_TAG = "BLE_GATT";
 //   } while (0);
 // }
 
-// esp_err_t ble_gatts_server_add_profile(ble_profile_t *profile)
+// esp_err_t ble_gatts_server_add_profile(ble_gatts_profile_t *profile)
 // {
 //   ESP_LOGI(GATTS_TAG, "Adding profile '%s'", profile->profile_name);
 //   ESP_LOGI(GATTS_TAG, "Number of profiles before: %d", s_num_profiles);
@@ -173,7 +173,7 @@ static const char *GATT_TAG = "BLE_GATT";
 
 //   profile->app_id = FIRST_PROFILE_APP_ID + s_num_profiles;
 //   profile->gatts_if = ESP_GATT_IF_NONE;
-//   memcpy(&s_profiles[s_num_profiles], profile, sizeof(ble_profile_t));
+//   memcpy(&s_profiles[s_num_profiles], profile, sizeof(ble_gatts_profile_t));
 
 //   if (esp_bluedroid_get_status() != ESP_BLUEDROID_STATUS_ENABLED)
 //     return ESP_ERR_INVALID_STATE;
@@ -211,12 +211,12 @@ esp_err_t ble_gatt_init()
 //     {
 //       ESP_LOGI(GATTS_TAG, "GATTS registered, app_id: %d, gatts_if: %d", param->reg.app_id, gatts_if);
 
-//       s_profiles[0].service_id_info.is_primary = true;
-//       s_profiles[0].service_id_info.id.inst_id = 0x00;
-//       s_profiles[0].service_id_info.id.uuid.len = ESP_UUID_LEN_16;
-//       s_profiles[0].service_id_info.id.uuid.uuid.uuid16 = my_service_uuid;
+//       s_profiles[0].service_id.is_primary = true;
+//       s_profiles[0].service_id.id.inst_id = 0x00;
+//       s_profiles[0].service_id.id.uuid.len = ESP_UUID_LEN_16;
+//       s_profiles[0].service_id.id.uuid.uuid.uuid16 = my_service_uuid;
 
-//       esp_ble_gatts_create_service(gatts_if, &s_profiles[0].service_id_info, GATTS_NUM_HANDLES);
+//       esp_ble_gatts_create_service(gatts_if, &s_profiles[0].service_id, GATTS_NUM_HANDLES);
 
 //       ESP_LOGI(GATTS_TAG, "Service created with UUID: 0x%04x", my_service_uuid);
 //       break;
@@ -227,13 +227,13 @@ esp_err_t ble_gatt_init()
 
 //       esp_ble_gatts_start_service(s_profiles[0].service_handle);
 
-//       s_profiles[0].char_uuid.len = ESP_UUID_LEN_16;
-//       s_profiles[0].char_uuid.uuid.uuid16 = my_char_uuid;
+//       s_profiles[0].characteristic_uuid.len = ESP_UUID_LEN_16;
+//       s_profiles[0].characteristic_uuid.uuid.uuid16 = my_characteristic_uuid;
 
 //       char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 
 //       esp_err_t add_char_ret = esp_ble_gatts_add_char(s_profiles[0].service_handle,
-//                                                       &s_profiles[0].char_uuid,
+//                                                       &s_profiles[0].characteristic_uuid,
 //                                                       ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 //                                                       char_property,
 //                                                       NULL,  // valor inicial
@@ -248,13 +248,13 @@ esp_err_t ble_gatt_init()
 //     }
 //     case ESP_GATTS_ADD_CHAR_EVT:
 //     {
-//       s_profiles[0].char_handle = param->add_char.attr_handle;
+//       s_profiles[0].characteristic_handle = param->add_char.attr_handle;
 
-//       s_profiles[0].char_uuid.len = ESP_UUID_LEN_16;
-//       s_profiles[0].char_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
+//       s_profiles[0].characteristic_uuid.len = ESP_UUID_LEN_16;
+//       s_profiles[0].characteristic_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
 
 //       esp_err_t add_descr_ret = esp_ble_gatts_add_char_descr(s_profiles[0].service_handle,
-//                                                              &s_profiles[0].char_uuid,
+//                                                              &s_profiles[0].characteristic_uuid,
 //                                                              ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 //                                                              NULL,
 //                                                              NULL);
@@ -276,8 +276,8 @@ esp_err_t ble_gatt_init()
 //     case ESP_GATTS_READ_EVT:
 //     {
 //       ESP_LOGI(GATTS_TAG,
-//                "Characteristic read, conn_id %d, trans_id %lu, handle %d",
-//                param->read.conn_id,
+//                "Characteristic read, connection_id %d, trans_id %lu, handle %d",
+//                param->read.connection_id,
 //                param->read.trans_id,
 //                param->read.handle);
 //       esp_gatt_rsp_t rsp;
@@ -289,14 +289,14 @@ esp_err_t ble_gatt_init()
 //       ESP_LOGI(GATTS_TAG, "Sending response with value: ");
 //       ESP_LOG_BUFFER_HEX(GATTS_TAG, rsp.attr_value.value, rsp.attr_value.len);
 
-//       esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+//       esp_ble_gatts_send_response(gatts_if, param->read.connection_id, param->read.trans_id, ESP_GATT_OK, &rsp);
 //       break;
 //     }
 //     case ESP_GATTS_WRITE_EVT:
 //     {
 //       ESP_LOGI(GATTS_TAG,
-//                "Characteristic write, conn_id %d, trans_id %lu, handle %d",
-//                param->write.conn_id,
+//                "Characteristic write, connection_id %d, trans_id %lu, handle %d",
+//                param->write.connection_id,
 //                param->write.trans_id,
 //                param->write.handle);
 
@@ -307,7 +307,7 @@ esp_err_t ble_gatt_init()
 //         // Atualize o valor da característica
 //         memcpy(char_value, param->write.value, param->write.len);
 //       }
-//       esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+//       esp_ble_gatts_send_response(gatts_if, param->write.connection_id, param->write.trans_id, ESP_GATT_OK, NULL);
 //       break;
 //     }
 //     default:

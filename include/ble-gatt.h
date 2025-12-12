@@ -21,19 +21,19 @@ typedef struct
 {
   esp_gatts_cb_t gatts_cb;
   esp_gatt_if_t gatts_if;
-  esp_gatt_srvc_id_t service_id_info;
-  uint16_t service_handle;
   uint16_t app_id;
-  uint16_t conn_id;
-  uint16_t char_handle;
-  esp_bt_uuid_t char_uuid;
+  uint16_t connection_id;
+  esp_gatt_srvc_id_t service_id;
+  uint16_t service_handle;
+  esp_bt_uuid_t characteristic_uuid;
+  uint16_t characteristic_handle;
+  esp_gatt_perm_t perm;
   esp_gatt_char_prop_t property;
   uint16_t descr_handle;
   esp_bt_uuid_t descr_uuid;
   char *profile_name;
-  esp_gatts_attr_db_t *gatt_db;
-  esp_gatt_perm_t perm;
-} ble_profile_t;
+  // esp_gatts_attr_db_t *gatt_db;
+} ble_gatts_profile_t;
 
 esp_err_t ble_gatt_init();
 esp_err_t ble_gatts_init();

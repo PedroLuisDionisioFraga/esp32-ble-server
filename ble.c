@@ -9,11 +9,11 @@
  *
  */
 
-// Implements BT controller and VHCI configuration procedures from the host side.
-#include <esp_bt.h>
+#include "ble.h"
+
+#include <esp_bt.h>  // Implements BT controller and VHCI configuration procedures from the host side.
 #include <esp_bt_device.h>
-// Implements initialization and enabling of the Bluedroid stack.
-#include <esp_bt_main.h>
+#include <esp_bt_main.h>      // Implements initialization and enabling of the Bluedroid stack.
 #include <esp_gap_ble_api.h>  // Implements GAP configuration such as advertising and connection parameters.
 #include <esp_gatt_common_api.h>
 #include <esp_gatt_defs.h>  // Implements GATT server API definitions.
@@ -23,7 +23,6 @@
 #include "ble-gap.h"
 #include "ble-gatt.h"
 #include "ble-gatts.h"
-#include "ble.h"
 #include "nvm_driver.h"
 
 static const char *TAG = "BLE";
@@ -37,7 +36,6 @@ void ble_init()
 
   ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
-  // Initialize Bluetooth controller
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   ret = esp_bt_controller_init(&bt_cfg);
   if (ret)
@@ -46,7 +44,6 @@ void ble_init()
     return;
   }
 
-  // Enable Bluetooth controller
   ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
   if (ret)
   {
@@ -54,7 +51,6 @@ void ble_init()
     return;
   }
 
-  // Initialize Bluedroid stack
   ret = esp_bluedroid_init();
   if (ret)
   {
@@ -62,7 +58,6 @@ void ble_init()
     return;
   }
 
-  // Enable Bluedroid stack
   ret = esp_bluedroid_enable();
   if (ret)
   {
@@ -70,7 +65,6 @@ void ble_init()
     return;
   }
 
-  // Separate GAP, GATT, and GATTS initialization
   if (ble_gatts_init() != ESP_OK)
     return;
   if (ble_gap_init("AIR-FRYER") != ESP_OK)

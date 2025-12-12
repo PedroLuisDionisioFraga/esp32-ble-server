@@ -9,6 +9,6 @@
 #include "ble-gatt.h"
 
 esp_err_t ble_gatts_init();
-esp_err_t ble_gatts_add_profile(ble_profile_t *profile);
+esp_err_t ble_gatts_add_profile(ble_gatts_profile_t *profile);
 
 #endif  // BLE_GATTS_H
