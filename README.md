@@ -226,3 +226,6 @@ Copyright (c) 2025 - All rights reserved.
 ---
 
 > **Note**: This component was developed for ESP32 using ESP-IDF. Make sure you have the development environment properly configured before compiling.
+
+## 📝 References
+- [ESP-IDF BLE GATT Server Documentation](https://github.com/espressif/esp-idf/blob/master/examples/bluetooth/bluedroid/ble/gatt_server/tutorial/Gatt_Server_Example_Walkthrough.md)
