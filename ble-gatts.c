@@ -1,8 +1,8 @@
 /**
  * @file ble-gatts.c
  * @author Pedro Luis Dionísio Fraga (pedrodfraga@hotmail.com)
- * @brief
- * @version 0.1
+ * @brief GATT Server implementation with characteristic abstraction
+ * @version 0.2
  * @date 2025-07-20
  *
  * @copyright Copyright (c) 2025
@@ -21,315 +21,435 @@
 
 #include "ble-gap.h"
 
-#define MAX_MTU_SIZE      500
-#define GATTS_NUM_HANDLES 8
-#define MAX_PROFILES      5
-// First profile constants
-#define APP_ID                                    0
-#define APP_SERVICE_UUID                          0x00FF  // Custom service UUID (avoid 0x1800-0x181F reserved UUIDs)
-#define APP_CHARACTERISTIC_UUID                   0xFF01  // Custom characteristic UUID
-#define APP_CHARACTERISTIC_PERMISSION             (esp_gatt_perm_t)(ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE)
-#define APP_CHARACTERISTIC_DESCRIPTION_UUID       0xFF02  // Custom characteristic description UUID
-#define APP_CHARACTERISTIC_DESCRIPTION_PERMISSION (esp_gatt_perm_t)(ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE)
-#define APP_CHARACTERISTIC_PROPERTY                                                                                  \
-  (esp_gatt_char_prop_t)(ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY)
-#define APP_DESCRIPTION_UUID 0x2901  // Characteristic User Description (standard UUID)
-#define APP_HANDLE           0x1
+#define GATTS_TAG "BLE_GATTS"
 
-static const char *GATTS_TAG = "BLE_GATTS";
+// Constants
+#define MAX_CHARACTERISTICS  16
+#define HANDLES_PER_CHAR     2  // 1 for char declaration + 1 for char value
+#define SERVICE_HANDLE_COUNT 1
+#define MAX_MTU_SIZE         500
+#define GATTS_APP_ID         0
 
-static uint8_t char_value[5] = {'P', 'E', 'D', 'R', 'O'};
-static const char attribute_name[] = "Atribute name test";
-static esp_attr_value_t user_desc_value = {
-  .attr_max_len = sizeof(attribute_name),
-  .attr_len = sizeof(attribute_name),
-  .attr_value = (uint8_t *)attribute_name,
-};
+// Calculate handles: service + (characteristics * handles_per_char)
+#define CALC_NUM_HANDLES(char_count) (SERVICE_HANDLE_COUNT + ((char_count) * HANDLES_PER_CHAR))
 
-static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
-                                        esp_ble_gatts_cb_param_t *param);
-
-static uint8_t s_num_profiles = 0;
-static ble_gatts_profile_t s_profiles[MAX_PROFILES];
-
-static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
+// Internal structure to track characteristic handles
+typedef struct
 {
-  if (event == ESP_GATTS_REG_EVT)
+  uint16_t char_handle;       // Characteristic value handle
+  uint16_t cccd_handle;       // CCCD handle (for notifications)
+  ble_characteristic_t *def;  // Pointer to user definition
+} ble_char_handle_t;
+
+// Module state
+static ble_characteristic_t *s_characteristics = NULL;
+static size_t s_char_count = 0;
+static uint16_t s_service_uuid = 0;
+static uint16_t s_service_handle = 0;
+static esp_gatt_if_t s_gatts_if = ESP_GATT_IF_NONE;
+static uint16_t s_conn_id = 0;
+static bool s_is_connected = false;
+
+// Handle tracking
+static ble_char_handle_t s_char_handles[MAX_CHARACTERISTICS];
+static size_t s_registered_chars = 0;
+
+// Forward declarations
+static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static ble_char_handle_t *find_char_by_handle(uint16_t handle);
+
+// External function to update connection state
+extern void ble_server_set_connected(bool connected);
+
+/**
+ * @brief Initialize GATTS with user-defined characteristics
+ */
+esp_err_t ble_gatts_init(ble_characteristic_t *chars, size_t count, uint16_t service_uuid)
+{
+  if (chars == NULL || count == 0)
   {
-    if (param->reg.status == ESP_GATT_OK)
-    {
-      ESP_LOGI(GATTS_TAG, "Register app success, app_id %d, gatts_if %d", param->reg.app_id, gatts_if);
-      s_profiles[param->reg.app_id].gatts_if = gatts_if;
-    }
-    else
-    {
-      ESP_LOGE(GATTS_TAG, "Reg app failed, app_id %04x, status %d", param->reg.app_id, param->reg.status);
-      return;
-    }
+    ESP_LOGE(GATTS_TAG, "Invalid parameters");
+    return ESP_ERR_INVALID_ARG;
   }
 
-  for (int idx = 0; idx < s_num_profiles; idx++)
+  if (count > MAX_CHARACTERISTICS)
   {
-    // ESP_GATT_IF_NONE, not specify a certain gatt_if, need to call every profile cb function
-    if (gatts_if == ESP_GATT_IF_NONE || gatts_if == s_profiles[idx].gatts_if)
-    {
-      if (s_profiles[idx].gatts_cb)
-      {
-        ESP_LOGI(GATTS_TAG, "Calling profile '%s' callback for event %d", s_profiles[idx].profile_name, event);
-        s_profiles[idx].gatts_cb(event, gatts_if, param);
-      }
-      else
-        ESP_LOGW(GATTS_TAG, "No callback registered for profile '%s'", s_profiles[idx].profile_name);
-
-      continue;
-    }
-    ESP_LOGW(GATTS_TAG, "Skipping profile for event %d, gatts_if %d does not match", event, gatts_if);
-  }
-}
-
-esp_err_t ble_gatts_add_profile(ble_gatts_profile_t *profile)
-{
-  ESP_LOGI(GATTS_TAG, "Adding profile '%s'", profile->profile_name);
-
-  if (s_num_profiles >= MAX_PROFILES)
+    ESP_LOGE(GATTS_TAG, "Too many characteristics (max %d)", MAX_CHARACTERISTICS);
     return ESP_ERR_NO_MEM;
-
-  profile->app_id = APP_ID + s_num_profiles;
-  profile->gatts_if = ESP_GATT_IF_NONE;
-
-  s_profiles[s_num_profiles] = *profile;
-  s_num_profiles++;  // Increment BEFORE registering so the callback can find this profile
-
-  if (esp_bluedroid_get_status() != ESP_BLUEDROID_STATUS_ENABLED)
-  {
-    s_num_profiles--;  // Rollback if not enabled
-    return ESP_ERR_INVALID_STATE;
   }
 
-  esp_err_t ret = esp_ble_gatts_app_register(profile->app_id);
+  s_characteristics = chars;
+  s_char_count = count;
+  s_service_uuid = service_uuid;
+  s_registered_chars = 0;
+
+  memset(s_char_handles, 0, sizeof(s_char_handles));
+
+  esp_err_t ret = esp_ble_gatts_register_callback(gatts_event_handler);
   if (ret != ESP_OK)
   {
-    ESP_LOGE(GATTS_TAG, "gatts app register failed, error code = %x", ret);
-    s_num_profiles--;  // Rollback on failure
+    ESP_LOGE(GATTS_TAG, "GATTS callback registration failed: %s", esp_err_to_name(ret));
     return ret;
   }
 
-  ESP_LOGI(GATTS_TAG, "Added profile '%s', app_id: %d", profile->profile_name, profile->app_id);
+  ret = esp_ble_gatts_app_register(GATTS_APP_ID);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(GATTS_TAG, "GATTS app register failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  ret = esp_ble_gatt_set_local_mtu(MAX_MTU_SIZE);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGW(GATTS_TAG, "Set MTU failed: %s", esp_err_to_name(ret));
+  }
+
+  ESP_LOGI(GATTS_TAG, "GATTS initialized with %d characteristics", count);
+  return ESP_OK;
+}
+
+/**
+ * @brief Deinitialize GATTS
+ */
+esp_err_t ble_gatts_deinit()
+{
+  esp_err_t ret = esp_ble_gatts_app_unregister(s_gatts_if);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(GATTS_TAG, "App unregister failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  s_characteristics = NULL;
+  s_char_count = 0;
+  s_gatts_if = ESP_GATT_IF_NONE;
+  s_registered_chars = 0;
 
   return ESP_OK;
 }
 
-static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
-                                        esp_ble_gatts_cb_param_t *param)
+/**
+ * @brief Main GATTS event handler
+ */
+static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
-  ESP_LOGI(GATTS_TAG, "gatts_profile_event_handler: event=%d, gatts_if=%d", event, gatts_if);
   switch (event)
   {
-    case ESP_GATTS_CONNECT_EVT:
-    {
-      ESP_LOGI(GATTS_TAG,
-               "GATT_CONNECT_EVT, connection_id %d, remote " ESP_BD_ADDR_STR "",
-               param->connect.conn_id,
-               ESP_BD_ADDR_HEX(param->connect.remote_bda));
-
-      ble_gap_update_connection_params(param->connect.remote_bda, 0x20, 0x40, 0, 400);
-      s_profiles[APP_ID].connection_id = param->connect.conn_id;
-      break;
-    }
     case ESP_GATTS_REG_EVT:
     {
-      ESP_LOGI(GATTS_TAG, "GATTS registered, app_id: %d, gatts_if: %d", param->reg.app_id, gatts_if);
-
-      s_profiles[APP_ID].service_id.is_primary = true;
-      s_profiles[APP_ID].service_id.id.inst_id = 0x00;
-      s_profiles[APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
-      s_profiles[APP_ID].service_id.id.uuid.uuid.uuid16 = APP_SERVICE_UUID;
-
-      esp_ble_gatts_create_service(gatts_if, &s_profiles[APP_ID].service_id, GATTS_NUM_HANDLES);
-
-      ESP_LOGI(GATTS_TAG, "Service created with UUID: 0x%04x", APP_SERVICE_UUID);
-      break;
-    }
-    case ESP_GATTS_CREATE_EVT:
-    {
-      ESP_LOGI(GATTS_TAG,
-               "Service create, status %d, service_handle %d",
-               param->create.status,
-               param->create.service_handle);
-
-      s_profiles[APP_ID].service_handle = param->create.service_handle;
-      s_profiles[APP_ID].characteristic_uuid.len = ESP_UUID_LEN_16;
-      s_profiles[APP_ID].characteristic_uuid.uuid.uuid16 = APP_CHARACTERISTIC_UUID;
-
-      esp_ble_gatts_start_service(s_profiles[APP_ID].service_handle);
-
-      esp_err_t add_char_ret = esp_ble_gatts_add_char(s_profiles[APP_ID].service_handle,
-                                                      &s_profiles[APP_ID].characteristic_uuid,
-                                                      APP_CHARACTERISTIC_PERMISSION,
-                                                      APP_CHARACTERISTIC_PROPERTY,
-                                                      NULL,
-                                                      NULL);
-      if (add_char_ret != ESP_OK)
+      if (param->reg.status != ESP_GATT_OK)
       {
-        ESP_LOGE(GATTS_TAG, "add char failed, error code =%x", add_char_ret);
+        ESP_LOGE(GATTS_TAG, "App registration failed, status %d", param->reg.status);
         return;
       }
 
-      break;
-    }
-    case ESP_GATTS_ADD_CHAR_EVT:
-    {
-      ESP_LOGI(GATTS_TAG,
-               "Characteristic add, status %d, attr_handle %d, service_handle %d",
-               param->add_char.status,
-               param->add_char.attr_handle,
-               param->add_char.service_handle);
+      s_gatts_if = gatts_if;
+      ESP_LOGI(GATTS_TAG, "App registered, gatts_if %d", gatts_if);
 
-      s_profiles[APP_ID].characteristic_handle = param->add_char.attr_handle;
-      // s_profiles[APP_ID].characteristic_uuid.len = ESP_UUID_LEN_16;
-      // s_profiles[APP_ID].characteristic_uuid.uuid.uuid16 = APP_CHARACTERISTIC_DESCRIPTION_UUID;
-      // UUID do descritor de User Description (0x2901 é o padrão BLE)
-      esp_bt_uuid_t descr_uuid = {
-        .len = ESP_UUID_LEN_16,
-        .uuid.uuid16 = APP_DESCRIPTION_UUID,
+      // Create the primary service
+      esp_gatt_srvc_id_t service_id = {
+        .is_primary = true,
+        .id =
+          {
+            .inst_id = 0,
+            .uuid =
+              {
+                .len = ESP_UUID_LEN_16,
+                .uuid.uuid16 = s_service_uuid,
+              },
+          },
       };
 
-      uint16_t length = 0;
-      const uint8_t *payload = NULL;
-      esp_err_t get_attr_ret = esp_ble_gatts_get_attr_value(param->add_char.attr_handle, &length, &payload);
-      if (get_attr_ret != ESP_OK)
+      uint16_t num_handles = CALC_NUM_HANDLES(s_char_count);
+      esp_ble_gatts_create_service(gatts_if, &service_id, num_handles);
+      break;
+    }
+
+    case ESP_GATTS_CREATE_EVT:
+    {
+      if (param->create.status != ESP_GATT_OK)
       {
-        ESP_LOGE(GATTS_TAG, "get attr value failed, error code =%x", get_attr_ret);
+        ESP_LOGE(GATTS_TAG, "Service creation failed, status %d", param->create.status);
+        return;
       }
 
-      ESP_LOGI(GATTS_TAG, "Characteristic length = %x", length);
-      for (int i = 0; i < length; i++)
-        ESP_LOGI(GATTS_TAG, "prf_char[%x] =%x", i, payload[i]);
+      s_service_handle = param->create.service_handle;
+      ESP_LOGI(GATTS_TAG, "Service created, handle %d", s_service_handle);
 
-      esp_err_t add_descr_ret = esp_ble_gatts_add_char_descr(s_profiles[APP_ID].service_handle,
-                                                             //&s_profiles[APP_ID].characteristic_uuid,
-                                                             &descr_uuid,
-                                                             APP_CHARACTERISTIC_DESCRIPTION_PERMISSION,
-                                                             &user_desc_value,
-                                                             NULL);
-      if (add_descr_ret != ESP_OK)
-        ESP_LOGE(GATTS_TAG, "add char descr failed, error code =%x", add_descr_ret);
+      // Start the service
+      esp_ble_gatts_start_service(s_service_handle);
 
-      break;
-    }
-    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-    {
-      s_profiles[APP_ID].descr_handle = param->add_char_descr.attr_handle;
-      ESP_LOGI(GATTS_TAG,
-               "Descriptor added, status %d, attr_handle %d, service_handle %d",
-               param->add_char_descr.status,
-               param->add_char_descr.attr_handle,
-               param->add_char_descr.service_handle);
-      break;
-    }
-    case ESP_GATTS_READ_EVT:
-    {
-      ESP_LOGI(GATTS_TAG,
-               "Characteristic read, connection_id %d, trans_id %lu, handle %d",
-               param->read.conn_id,
-               param->read.trans_id,
-               param->read.handle);
-
-      esp_gatt_rsp_t rsp;
-      memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-      rsp.attr_value.handle = param->read.handle;
-      rsp.attr_value.len = sizeof(char_value);
-      memcpy(rsp.attr_value.value, char_value, sizeof(char_value));
-
-      ESP_LOGI(GATTS_TAG, "Sending response with value: ");
-      ESP_LOG_BUFFER_HEX(GATTS_TAG, rsp.attr_value.value, rsp.attr_value.len);
-
-      esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
-      break;
-    }
-    case ESP_GATTS_WRITE_EVT:
-    {
-      ESP_LOGI(GATTS_TAG,
-               "Characteristic write, conn_id %d, trans_id %lu, handle %d",
-               param->write.conn_id,
-               param->write.trans_id,
-               param->write.handle);
-
-      if (!param->write.is_prep)
+      // Add first characteristic
+      if (s_char_count > 0)
       {
-        ESP_LOGI(GATTS_TAG, "value len %d, value ", param->write.len);
-        ESP_LOG_BUFFER_HEX(GATTS_TAG, param->write.value, param->write.len);
+        ble_characteristic_t *ch = &s_characteristics[0];
 
-        if (s_profiles[APP_ID].characteristic_handle == param->write.handle)
+        // Determine properties based on handlers
+        esp_gatt_char_prop_t props = 0;
+        if (ch->read != NULL)
+          props |= ESP_GATT_CHAR_PROP_BIT_READ;
+        if (ch->write != NULL)
+          props |= ESP_GATT_CHAR_PROP_BIT_WRITE;
+
+        // Determine permissions
+        esp_gatt_perm_t perms = 0;
+        if (ch->read != NULL)
+          perms |= ESP_GATT_PERM_READ;
+        if (ch->write != NULL)
+          perms |= ESP_GATT_PERM_WRITE;
+
+        esp_bt_uuid_t char_uuid = {
+          .len = ESP_UUID_LEN_16,
+          .uuid.uuid16 = ch->uuid,
+        };
+
+        esp_err_t ret = esp_ble_gatts_add_char(s_service_handle, &char_uuid, perms, props, NULL, NULL);
+        if (ret != ESP_OK)
+          ESP_LOGE(GATTS_TAG, "Add char failed: %s", esp_err_to_name(ret));
+        else
+          ESP_LOGI(GATTS_TAG, "Adding characteristic '%s' (UUID: 0x%04X)", ch->name, ch->uuid);
+      }
+      break;
+    }
+
+    case ESP_GATTS_ADD_CHAR_EVT:
+    {
+      if (param->add_char.status != ESP_GATT_OK)
+      {
+        ESP_LOGE(GATTS_TAG, "Add char failed, status %d", param->add_char.status);
+        return;
+      }
+
+      // Store handle for this characteristic
+      if (s_registered_chars < s_char_count)
+      {
+        s_char_handles[s_registered_chars].char_handle = param->add_char.attr_handle;
+        s_char_handles[s_registered_chars].def = &s_characteristics[s_registered_chars];
+
+        ESP_LOGI(GATTS_TAG,
+                 "Characteristic added: '%s' handle=%d",
+                 s_characteristics[s_registered_chars].name,
+                 param->add_char.attr_handle);
+
+        s_registered_chars++;
+
+        // Add next characteristic if available
+        if (s_registered_chars < s_char_count)
         {
-          ESP_LOGI(GATTS_TAG, "Updating characteristic value");
-          memcpy(char_value, param->write.value, param->write.len);
+          ble_characteristic_t *ch = &s_characteristics[s_registered_chars];
 
-          // Check if notification or indication is enabled
-          if (APP_CHARACTERISTIC_PROPERTY & (ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE))
-          {
-            ESP_LOGI(GATTS_TAG, "Notification enable");
-            // the size of notify_data[] need less than MTU size
-            uint8_t notify_data[15];
-            for (int i = 0; i < sizeof(notify_data); ++i)
-              notify_data[i] = i % 0xff;
+          esp_gatt_char_prop_t props = 0;
+          if (ch->read != NULL)
+            props |= ESP_GATT_CHAR_PROP_BIT_READ;
+          if (ch->write != NULL)
+            props |= ESP_GATT_CHAR_PROP_BIT_WRITE;
 
-            bool need_confirm = (APP_CHARACTERISTIC_PROPERTY & ESP_GATT_CHAR_PROP_BIT_INDICATE) != 0;
-            esp_ble_gatts_send_indicate(gatts_if,
-                                        param->write.conn_id,
-                                        s_profiles[APP_ID].characteristic_handle,
-                                        sizeof(notify_data),
-                                        notify_data,
-                                        need_confirm);
-          }
+          esp_gatt_perm_t perms = 0;
+          if (ch->read != NULL)
+            perms |= ESP_GATT_PERM_READ;
+          if (ch->write != NULL)
+            perms |= ESP_GATT_PERM_WRITE;
+
+          esp_bt_uuid_t char_uuid = {
+            .len = ESP_UUID_LEN_16,
+            .uuid.uuid16 = ch->uuid,
+          };
+
+          esp_ble_gatts_add_char(s_service_handle, &char_uuid, perms, props, NULL, NULL);
+          ESP_LOGI(GATTS_TAG, "Adding characteristic '%s' (UUID: 0x%04X)", ch->name, ch->uuid);
+        }
+        else
+        {
+          ESP_LOGI(GATTS_TAG, "All %d characteristics registered", s_registered_chars);
         }
       }
-      esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
       break;
     }
-    case ESP_GATTS_RESPONSE_EVT:
+
+    case ESP_GATTS_CONNECT_EVT:
     {
-      ESP_LOGI(GATTS_TAG, "Response event, status %d", param->rsp.status);
+      s_conn_id = param->connect.conn_id;
+      s_is_connected = true;
+      ble_server_set_connected(true);
+
+      ESP_LOGI(GATTS_TAG,
+               "Client connected, conn_id=%d, remote=" ESP_BD_ADDR_STR,
+               param->connect.conn_id,
+               ESP_BD_ADDR_HEX(param->connect.remote_bda));
+
+      // Update connection parameters
+      ble_gap_update_connection_params(param->connect.remote_bda, 0x20, 0x40, 0, 400);
       break;
     }
-    case ESP_GATTS_EXEC_WRITE_EVT:
-    {
-      ESP_LOGI(GATTS_TAG, "Exec write event");
-      break;
-    }
-    case ESP_GATTS_MTU_EVT:
-    {
-      ESP_LOGI(GATTS_TAG, "MTU event, MTU %d", param->mtu.mtu);
-      break;
-    }
+
     case ESP_GATTS_DISCONNECT_EVT:
     {
-      ESP_LOGI(GATTS_TAG, "Disconnect event, reason %d", param->disconnect.reason);
+      s_is_connected = false;
+      ble_server_set_connected(false);
+
+      ESP_LOGI(GATTS_TAG, "Client disconnected, reason=0x%x", param->disconnect.reason);
+
+      // Restart advertising
       ble_gap_start_adv();
       break;
     }
+
+    case ESP_GATTS_READ_EVT:
+    {
+      handle_char_read(gatts_if, param);
+      break;
+    }
+
+    case ESP_GATTS_WRITE_EVT:
+    {
+      handle_char_write(gatts_if, param);
+      break;
+    }
+
+    case ESP_GATTS_MTU_EVT:
+    {
+      ESP_LOGI(GATTS_TAG, "MTU updated to %d", param->mtu.mtu);
+      break;
+    }
+
+    case ESP_GATTS_START_EVT:
+    {
+      ESP_LOGI(GATTS_TAG, "Service started, status %d", param->start.status);
+      break;
+    }
+
     default:
     {
-      ESP_LOGI(GATTS_TAG, "Unhandled GATTS event: %d", event);
+      ESP_LOGD(GATTS_TAG, "Unhandled event: %d", event);
       break;
     }
   }
 }
 
-esp_err_t ble_gatts_init()
+/**
+ * @brief Handle characteristic read request
+ */
+static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
-  esp_err_t ret;
+  ble_char_handle_t *ch = find_char_by_handle(param->read.handle);
 
-  ret = esp_ble_gatts_register_callback(gatts_event_handler);
-  if (ret)
-    return ret;
+  if (ch == NULL)
+  {
+    ESP_LOGW(GATTS_TAG, "Read request for unknown handle %d", param->read.handle);
+    esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_INVALID_HANDLE, NULL);
+    return;
+  }
 
-  ret = ble_gatts_add_profile(&(ble_gatts_profile_t){
-    .gatts_cb = gatts_profile_event_handler,
-    .profile_name = "Default Profile",
-  });
-  if (ret != ESP_OK)
-    return ret;
+  ESP_LOGI(GATTS_TAG, "Read request for '%s'", ch->def->name);
 
-  return ESP_OK;
+  esp_gatt_rsp_t rsp = {0};
+  rsp.attr_value.handle = param->read.handle;
+
+  if (ch->def->read == NULL)
+  {
+    // Write-only characteristic
+    ESP_LOGW(GATTS_TAG, "Characteristic '%s' is write-only", ch->def->name);
+    esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_READ_NOT_PERMIT, NULL);
+    return;
+  }
+
+  // Call user's read handler
+  int bytes_read = ch->def->read(rsp.attr_value.value, sizeof(rsp.attr_value.value));
+
+  if (bytes_read < 0)
+  {
+    ESP_LOGE(GATTS_TAG, "Read handler error for '%s'", ch->def->name);
+    esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_ERROR, NULL);
+    return;
+  }
+
+  rsp.attr_value.len = bytes_read;
+
+  ESP_LOGI(GATTS_TAG, "Sending %d bytes for '%s'", bytes_read, ch->def->name);
+  ESP_LOG_BUFFER_HEX_LEVEL(GATTS_TAG, rsp.attr_value.value, bytes_read, ESP_LOG_DEBUG);
+
+  esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+}
+
+/**
+ * @brief Handle characteristic write request
+ */
+static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
+{
+  ble_char_handle_t *ch = find_char_by_handle(param->write.handle);
+
+  if (ch == NULL)
+  {
+    ESP_LOGW(GATTS_TAG, "Write request for unknown handle %d", param->write.handle);
+    esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_INVALID_HANDLE, NULL);
+    return;
+  }
+
+  ESP_LOGI(GATTS_TAG, "Write request for '%s', len=%d", ch->def->name, param->write.len);
+  ESP_LOG_BUFFER_HEX_LEVEL(GATTS_TAG, param->write.value, param->write.len, ESP_LOG_DEBUG);
+
+  if (ch->def->write == NULL)
+  {
+    // Read-only characteristic
+    ESP_LOGW(GATTS_TAG, "Characteristic '%s' is read-only", ch->def->name);
+    esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_WRITE_NOT_PERMIT, NULL);
+    return;
+  }
+
+  // Call user's write handler
+  ble_char_error_t result = ch->def->write(param->write.value, param->write.len);
+
+  // Map error code to GATT status
+  esp_gatt_status_t status;
+  switch (result)
+  {
+    case BLE_CHAR_OK:
+      status = ESP_GATT_OK;
+      ESP_LOGI(GATTS_TAG, "Write to '%s' successful", ch->def->name);
+      break;
+    case BLE_CHAR_ERR_SIZE:
+      status = ESP_GATT_INVALID_ATTR_LEN;
+      ESP_LOGW(GATTS_TAG, "Write to '%s' failed: invalid size", ch->def->name);
+      break;
+    case BLE_CHAR_ERR_VALUE:
+      status = ESP_GATT_OUT_OF_RANGE;
+      ESP_LOGW(GATTS_TAG, "Write to '%s' failed: value out of range", ch->def->name);
+      break;
+    case BLE_CHAR_ERR_READONLY:
+      status = ESP_GATT_WRITE_NOT_PERMIT;
+      ESP_LOGW(GATTS_TAG, "Write to '%s' failed: read-only", ch->def->name);
+      break;
+    case BLE_CHAR_ERR_BUSY:
+      status = ESP_GATT_BUSY;
+      ESP_LOGW(GATTS_TAG, "Write to '%s' failed: busy", ch->def->name);
+      break;
+    default:
+      status = ESP_GATT_ERROR;
+      ESP_LOGE(GATTS_TAG, "Write to '%s' failed: unknown error %d", ch->def->name, result);
+      break;
+  }
+
+  // Send response if needed
+  if (param->write.need_rsp)
+  {
+    esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
+  }
+}
+
+/**
+ * @brief Find characteristic by attribute handle
+ */
+static ble_char_handle_t *find_char_by_handle(uint16_t handle)
+{
+  for (size_t i = 0; i < s_registered_chars; i++)
+  {
+    if (s_char_handles[i].char_handle == handle)
+    {
+      return &s_char_handles[i];
+    }
+  }
+  return NULL;
 }
