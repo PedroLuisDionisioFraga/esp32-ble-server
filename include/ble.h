@@ -95,7 +95,7 @@ typedef struct
  * @param config Pointer to server configuration (must remain valid)
  * @return 0 on success, negative value on error
  */
-int ble_server_init(const ble_server_config_t *config);
+ble_return_code_t ble_server_init(const ble_server_config_t *config);
 
 /**
  * @brief Stop the BLE server and release resources
@@ -104,15 +104,13 @@ int ble_server_init(const ble_server_config_t *config);
  *
  * @return 0 on success, negative value on error
  */
-int ble_server_stop(void);
+ble_return_code_t ble_server_stop();
 
 /**
  * @brief Check if a BLE client is currently connected
  *
  * @return true if a client is connected, false otherwise
  */
-bool ble_server_is_connected(void);
-
-void ble_init();
+bool ble_server_is_connected();
 
 #endif  // BLE_H

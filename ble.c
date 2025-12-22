@@ -36,7 +36,7 @@ static const ble_server_config_t *s_config = NULL;
 /**
  * @brief Initialize and start the BLE GATT server
  */
-int ble_server_init(const ble_server_config_t *config)
+ble_return_code_t ble_server_init(const ble_server_config_t *config)
 {
   if (s_initialized)
   {
@@ -115,7 +115,7 @@ int ble_server_init(const ble_server_config_t *config)
 /**
  * @brief Stop the BLE server and release resources
  */
-int ble_server_stop(void)
+ble_return_code_t ble_server_stop()
 {
   if (!s_initialized)
   {
@@ -170,7 +170,7 @@ int ble_server_stop(void)
 /**
  * @brief Check if a BLE client is currently connected
  */
-bool ble_server_is_connected(void)
+bool ble_server_is_connected()
 {
   return s_connected;
 }

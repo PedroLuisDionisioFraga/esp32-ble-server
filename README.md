@@ -1,218 +1,479 @@
-# 📡 BLE Component - Air Fryer
+# 📡 BLE Component
 
-Bluetooth Low Energy (BLE) component for the FETIN 2025 Air Fryer project. This component implements a complete BLE GATT server using the ESP-IDF Bluedroid stack.
+Bluetooth Low Energy (BLE) component for ESP32 project. This component provides a **simple abstraction layer** over the ESP-IDF Bluedroid stack, allowing developers to create BLE GATT servers with minimal boilerplate code.
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
+- [Features](#features)
 - [Architecture](#architecture)
-- [Service UUIDs](#service-uuids)
-- [Public API](#public-api)
+- [Quick Start](#quick-start)
+- [API Reference](#api-reference)
+- [Complete Usage Example](#complete-usage-example)
+- [Error Codes](#error-codes)
 - [Configuration](#configuration)
-- [Dependencies](#dependencies)
-- [Usage](#usage)
 - [Author](#author)
 
 ## 🎯 Overview
 
-This component provides a BLE interface for Air Fryer control and monitoring, enabling:
+This component simplifies BLE development by providing a clean, callback-based API. Instead of dealing with complex ESP-IDF BLE internals, you simply:
 
-- **BLE Advertising**: Device visible for connections
-- **GATT Server**: Services and characteristics for communication
-- **Read/Write**: Bidirectional control via BLE characteristics
-- **Notifications**: Asynchronous data transmission to connected devices
+1. **Define characteristics** with read/write handlers
+2. **Call `ble_server_init()`** with your configuration
+3. **Done!** The library handles everything else
+
+## ✨ Features
+
+- **Simple API**: Only include `ble.h` - no need to understand ESP-IDF BLE internals
+- **Callback-based**: Define read/write handlers for each characteristic
+- **Automatic advertising**: Starts advertising automatically after initialization
+- **Auto-reconnect**: Restarts advertising when client disconnects
+- **Flexible characteristics**: Support for read-only, write-only, and read/write characteristics
+- **Error handling**: Comprehensive error codes for validation
+- **Up to 16 characteristics**: Per GATT service
 
 ## 🏗️ Architecture
 
-The component is divided into three main layers:
+The component is divided into layers that abstract away ESP-IDF complexity:
 
 ```
-┌─────────────────────────────────────────┐
-│              ble.c (Main)               │
-│         Inicialização Principal         │
-├─────────────────────────────────────────┤
-│  ble-gap.c  │  ble-gatt.c  │ ble-gatts.c│
-│   (GAP)     │   (GATT)     │  (Server)  │
-├─────────────────────────────────────────┤
-│         ESP-IDF Bluedroid Stack         │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR APPLICATION                         │
+│           (Only uses ble.h - simple API)                    │
+├─────────────────────────────────────────────────────────────┤
+│                      ble.c (Main)                           │
+│              Server initialization & control                │
+├─────────────────────────────────────────────────────────────┤
+│     ble-gap.c     │     ble-gatt.c     │    ble-gatts.c     │
+│   (Advertising)   │      (MTU)         │  (Characteristics) │
+├─────────────────────────────────────────────────────────────┤
+│                 ESP-IDF Bluedroid Stack                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Modules
+### Internal Modules (You don't need to use these directly)
 
-| Module | Description |
-|--------|-------------|
-| **ble.c** | Main entry point, initializes BT controller and Bluedroid |
-| **ble-gap.c** | Generic Access Profile - Manages advertising and connections |
-| **ble-gatt.c** | Generic Attribute Profile - MTU configuration |
-| **ble-gatts.c** | GATT Server - Services, characteristics and event handlers |
+| Module          | Description                                                  |
+|-----------------|--------------------------------------------------------------|
+| **ble.c**       | Main entry point, initializes BT controller and Bluedroid    |
+| **ble-gap.c**   | Generic Access Profile - Manages advertising and connections |
+| **ble-gatt.c**  | Generic Attribute Profile - MTU configuration                |
+| **ble-gatts.c** | GATT Server - Services, characteristics and event handlers   |
 
-## 🔑 Service UUIDs
+## 🚀 Quick Start
 
-### Services
-
-| UUID | Name | Description |
-|------|------|-------------|
-| `0x00FF` | Air Fryer Service | Main service for control and monitoring |
-| `0xED58` | Advertising Service | UUID used in advertising data |
-| `0xAFBD` | Scan Response Service | UUID used in scan response data |
-
-### Characteristics
-
-| UUID | Name | Properties | Description |
-|------|------|------------|-------------|
-| `0xFF01` | Control | Read/Write/Notify | Main control characteristic |
-
-### Descriptors
-
-| UUID | Name | Description |
-|------|------|-------------|
-| `0x2901` | Characteristic User Description | Human-readable characteristic name |
-| `0x2902` | Client Characteristic Configuration | Notification configuration |
-
-## 📚 Public API
-
-### Initialization
+### Step 1: Include the header
 
 ```c
 #include "ble.h"
-
-// Initialize the entire BLE stack
-void ble_init();
 ```
 
-### GAP (Generic Access Profile)
+### Step 2: Define read/write handlers
 
 ```c
-#include "ble-gap.h"
+// Read handler - called when client reads the characteristic
+static int on_read_temperature(uint8_t *out_buffer, size_t max_len)
+{
+    if (max_len < 1) return 0;
+    out_buffer[0] = get_temperature();  // Your data
+    return 1;  // Return bytes written
+}
 
-// Initialize GAP with device name
-esp_err_t ble_gap_init(const char *device_name);
-
-// Start advertising
-esp_err_t ble_gap_start_adv();
-
-// Update connection parameters
-esp_err_t ble_gap_update_connection_params(
-    uint8_t *bda,           // Bluetooth device address
-    uint16_t min_interval,  // Minimum connection interval
-    uint16_t max_interval,  // Maximum connection interval
-    uint16_t latency,       // Slave latency
-    uint16_t timeout        // Supervision timeout
-);
+// Write handler - called when client writes to the characteristic
+static ble_char_error_t on_write_brightness(const uint8_t *data, size_t len)
+{
+    if (len < 1) return BLE_CHAR_ERR_SIZE;
+    if (data[0] > 100) return BLE_CHAR_ERR_VALUE;
+    set_brightness(data[0]);  // Apply the value
+    return BLE_CHAR_OK;
+}
 ```
 
-### GATT Server
+### Step 3: Define characteristics
 
 ```c
-#include "ble-gatts.h"
-
-// Initialize GATT Server
-esp_err_t ble_gatts_init();
-
-// Add a new profile
-esp_err_t ble_gatts_add_profile(ble_gatts_profile_t *profile);
+static ble_characteristic_t my_characteristics[] = {
+    {
+        .uuid = 0xFF01,
+        .name = "Temperature",
+        .size = 1,
+        .read = on_read_temperature,
+        .write = NULL,  // Read-only
+    },
+    {
+        .uuid = 0xFF02,
+        .name = "Brightness",
+        .size = 1,
+        .read = NULL,
+        .write = on_write_brightness,  // Write-only
+    },
+};
 ```
 
-### Profile Structure
+### Step 4: Configure and initialize
+
+```c
+static ble_server_config_t config = {
+    .device_name = "MY-DEVICE",
+    .service_uuid = 0x00FF,
+    .characteristics = my_characteristics,
+    .characteristic_count = 2,
+};
+
+void app_main(void)
+{
+    int ret = ble_server_init(&config);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "BLE init failed!");
+        return;
+    }
+    // BLE is now running and advertising!
+}
+```
+
+## 📚 API Reference
+
+### Main Functions
+
+#### `ble_server_init()`
+
+Initialize and start the BLE GATT server.
+
+```c
+ble_return_code_t ble_server_init(const ble_server_config_t *config);
+```
+
+**Parameters:**
+- `config`: Pointer to server configuration (must remain valid during operation)
+
+**Returns:**
+- `BLE_SUCCESS (0)`: Success
+- `BLE_ALREADY_INITIALIZED`: Server already running
+- `BLE_INVALID_CONFIG`: NULL config or device name
+- `BLE_INVALID_CHARS`: No characteristics defined
+- `BLE_GENERIC_ERROR`: ESP-IDF error
+
+---
+
+#### `ble_server_stop()`
+
+Stop the BLE server and release resources.
+
+```c
+ble_return_code_t ble_server_stop();
+```
+
+**Returns:**
+- `BLE_SUCCESS (0)`: Success
+- `BLE_NOT_INITIALIZED`: Server not running
+
+---
+
+#### `ble_server_is_connected()`
+
+Check if a BLE client is currently connected.
+
+```c
+bool ble_server_is_connected();
+```
+
+**Returns:**
+- `true`: Client connected
+- `false`: No client connected
+
+---
+
+### Configuration Structures
+
+#### `ble_server_config_t`
 
 ```c
 typedef struct {
-    esp_gatts_cb_t gatts_cb;           // GATT event callback
-    esp_gatt_if_t gatts_if;            // GATT interface
-    uint16_t app_id;                   // Application ID
-    uint16_t connection_id;            // Connection ID
-    esp_gatt_srvc_id_t service_id;     // Service ID
-    uint16_t service_handle;           // Service handle
-    esp_bt_uuid_t characteristic_uuid; // Characteristic UUID
-    uint16_t characteristic_handle;    // Characteristic handle
-    esp_gatt_perm_t perm;              // Permissions
-    esp_gatt_char_prop_t property;     // Properties
-    uint16_t descr_handle;             // Descriptor handle
-    esp_bt_uuid_t descr_uuid;          // Descriptor UUID
-    char *profile_name;                // Profile name
-} ble_gatts_profile_t;
+    const char *device_name;                // BLE device name (shown during scan)
+    uint16_t service_uuid;                  // Primary service UUID (e.g., 0x00FF)
+    ble_characteristic_t *characteristics;  // Array of characteristic definitions
+    size_t characteristic_count;            // Number of characteristics
+} ble_server_config_t;
 ```
+
+#### `ble_characteristic_t`
+
+```c
+typedef struct {
+    uint16_t uuid;           // 16-bit UUID (e.g., 0xFF01)
+    const char *name;        // Human-readable name for debugging
+    uint8_t size;            // Maximum data size in bytes
+    ble_char_read_t read;    // Read handler (NULL = write-only)
+    ble_char_write_t write;  // Write handler (NULL = read-only)
+} ble_characteristic_t;
+```
+
+---
+
+### Handler Function Types
+
+#### Read Handler
+
+```c
+typedef int (*ble_char_read_t)(uint8_t *out_buffer, size_t max_len);
+```
+
+**Parameters:**
+- `out_buffer`: Buffer to fill with data
+- `max_len`: Maximum buffer size
+
+**Returns:**
+- Number of bytes written (≥ 0), or negative on error
+
+#### Write Handler
+
+```c
+typedef ble_char_error_t (*ble_char_write_t)(const uint8_t *in_data, size_t len);
+```
+
+**Parameters:**
+- `in_data`: Pointer to received data
+- `len`: Length of received data
+
+**Returns:**
+- `BLE_CHAR_OK` on success, or error code
+
+## 🎯 Complete Usage Example
+
+This example shows a complete Air Fryer BLE server implementation (based on `main.c`):
+
+```c
+#include <esp_log.h>
+#include <string.h>
+#include "ble.h"
+
+static const char *TAG = "MAIN";
+
+// ============================================================================
+// Data Storage - Your application data
+// ============================================================================
+static uint8_t temperature_value = 25;  // Temperature in Celsius
+static uint8_t led_brightness = 100;    // LED brightness (0-255)
+static char device_status[16] = "IDLE";
+
+// ============================================================================
+// READ HANDLERS - Called when BLE client reads a characteristic
+// ============================================================================
+
+static int on_read_temperature(uint8_t *out_buffer, size_t max_len)
+{
+    ESP_LOGI(TAG, "Reading temperature: %d°C", temperature_value);
+    if (max_len < 1) return 0;
+    out_buffer[0] = temperature_value;
+    return 1;  // Return number of bytes written
+}
+
+static int on_read_brightness(uint8_t *out_buffer, size_t max_len)
+{
+    ESP_LOGI(TAG, "Reading brightness: %d", led_brightness);
+    if (max_len < 1) return 0;
+    out_buffer[0] = led_brightness;
+    return 1;
+}
+
+static int on_read_status(uint8_t *out_buffer, size_t max_len)
+{
+    size_t len = strlen(device_status);
+    if (len > max_len) len = max_len;
+    memcpy(out_buffer, device_status, len);
+    ESP_LOGI(TAG, "Reading status: %s", device_status);
+    return len;
+}
+
+// ============================================================================
+// WRITE HANDLERS - Called when BLE client writes to a characteristic
+// ============================================================================
+
+static ble_char_error_t on_write_brightness(const uint8_t *data, size_t len)
+{
+    if (len < 1) return BLE_CHAR_ERR_SIZE;
+
+    led_brightness = data[0];
+    ESP_LOGI(TAG, "Brightness set to: %d", led_brightness);
+
+    // Apply to hardware here...
+    return BLE_CHAR_OK;
+}
+
+static ble_char_error_t on_write_command(const uint8_t *data, size_t len)
+{
+    if (len < 1) return BLE_CHAR_ERR_SIZE;
+
+    uint8_t command = data[0];
+    ESP_LOGI(TAG, "Command received: 0x%02X", command);
+
+    switch (command)
+    {
+        case 0x01: strcpy(device_status, "RUNNING"); break;
+        case 0x02: strcpy(device_status, "STOPPED"); break;
+        case 0x03: strcpy(device_status, "IDLE");    break;
+        default:   return BLE_CHAR_ERR_VALUE;  // Invalid command
+    }
+
+    return BLE_CHAR_OK;
+}
+
+// ============================================================================
+// CHARACTERISTIC DEFINITIONS
+// ============================================================================
+
+static ble_characteristic_t my_characteristics[] = {
+    {
+        .uuid = 0xFF01,
+        .name = "Temperature",
+        .size = 1,
+        .read = on_read_temperature,
+        .write = NULL,  // Read-only (no write handler)
+    },
+    {
+        .uuid = 0xFF02,
+        .name = "Brightness",
+        .size = 1,
+        .read = on_read_brightness,
+        .write = on_write_brightness,  // Read/Write
+    },
+    {
+        .uuid = 0xFF03,
+        .name = "Status",
+        .size = 16,
+        .read = on_read_status,
+        .write = NULL,  // Read-only
+    },
+    {
+        .uuid = 0xFF04,
+        .name = "Command",
+        .size = 1,
+        .read = NULL,  // Write-only (no read handler)
+        .write = on_write_command,
+    },
+};
+
+// ============================================================================
+// SERVER CONFIGURATION
+// ============================================================================
+
+static ble_server_config_t ble_config = {
+    .device_name = "AIR-FRYER",
+    .service_uuid = 0x00FF,
+    .characteristics = my_characteristics,
+    .characteristic_count = sizeof(my_characteristics) / sizeof(my_characteristics[0]),
+};
+
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
+
+void app_main(void)
+{
+    // Initialize BLE server
+    int ret = ble_server_init(&ble_config);
+    if (ret != 0)
+    {
+        ESP_LOGE(TAG, "BLE initialization failed with code: %d", ret);
+        return;
+    }
+
+    ESP_LOGI(TAG, "BLE initialized with %d characteristics", ble_config.characteristic_count);
+    ESP_LOGI(TAG, "Device name: %s, Service UUID: 0x%04X",
+             ble_config.device_name, ble_config.service_uuid);
+
+    // Main loop
+    while (1)
+    {
+        // Check connection status
+        if (ble_server_is_connected())
+        {
+            ESP_LOGI(TAG, "Client connected | Temp: %d°C | Status: %s",
+                     temperature_value, device_status);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+```
+
+### Characteristic Types Summary
+
+| Type | Read Handler | Write Handler | Use Case |
+|------|-------------|---------------|----------|
+| **Read-only** | ✅ Defined | ❌ NULL | Sensors, status |
+| **Write-only** | ❌ NULL | ✅ Defined | Commands, settings |
+| **Read/Write** | ✅ Defined | ✅ Defined | Configurable values |
+
+## ❌ Error Codes
+
+### Server Return Codes (`ble_return_code_t`)
+
+| Code | Value | Description |
+|------|-------|-------------|
+| `BLE_SUCCESS` | 0 | Operation successful |
+| `BLE_GENERIC_ERROR` | 1 | Generic error |
+| `BLE_ALREADY_INITIALIZED` | 2 | Server already running |
+| `BLE_NOT_INITIALIZED` | 3 | Server not started |
+| `BLE_INVALID_CONFIG` | 4 | Invalid configuration |
+| `BLE_INVALID_CHARS` | 5 | No characteristics defined |
+
+### Characteristic Handler Codes (`ble_char_error_t`)
+
+| Code | Value | Description | When to Use |
+|------|-------|-------------|-------------|
+| `BLE_CHAR_OK` | 0 | Success | Data accepted |
+| `BLE_CHAR_ERR_SIZE` | 1 | Invalid size | Wrong data length |
+| `BLE_CHAR_ERR_VALUE` | 2 | Invalid value | Value out of range |
+| `BLE_CHAR_ERR_READONLY` | 3 | Read-only | Write not allowed |
+| `BLE_CHAR_ERR_BUSY` | 4 | Device busy | Try again later |
 
 ## ⚙️ Configuration
 
-### Advertising Parameters
+### Default Advertising Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `adv_int_min` | 0x20 (20ms) | Minimum advertising interval |
-| `adv_int_max` | 0x40 (40ms) | Maximum advertising interval |
-| `adv_type` | ADV_TYPE_IND | Connectable undirected advertising |
-| `own_addr_type` | BLE_ADDR_TYPE_PUBLIC | Public address type |
-| `channel_map` | ADV_CHNL_ALL | All advertising channels |
+| Interval Min | 0x20 (20ms) | Minimum advertising interval |
+| Interval Max | 0x40 (40ms) | Maximum advertising interval |
+| Type | ADV_TYPE_IND | Connectable undirected |
+| Address Type | PUBLIC | Public Bluetooth address |
+| Channels | ALL | All advertising channels (37, 38, 39) |
 
-### GATT Parameters
+### GATT Configuration
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `MAX_MTU_SIZE` | 500 | Maximum MTU size |
-| `GATTS_NUM_HANDLES` | 8 | Number of GATT handles |
-| `MAX_PROFILES` | 5 | Maximum number of profiles |
+| Max MTU | 500 bytes | Maximum Transmission Unit |
+| Max Characteristics | 16 | Per service limit |
+| App ID | 0 | GATTS application ID |
 
 ## 📦 Dependencies
 
-This component depends on:
+This component requires:
 
-- **ESP-IDF**: Development framework (Bluedroid stack)
+- **ESP-IDF**: v5.0+ (Bluedroid stack)
 - **bt**: ESP-IDF Bluetooth component
-- **nvm-driver**: Non-Volatile Memory driver (storage)
+- **nvm-driver**: Non-Volatile Memory driver
 
 ### CMakeLists.txt
 
 ```cmake
-idf_component_register(SRCS "ble-gatts.c" "ble-gatt.c" "ble-gap.c" "ble.c"
-                    INCLUDE_DIRS "include"
-                    PRIV_REQUIRES nvm-driver bt)
+idf_component_register(
+    SRCS "ble-gatts.c" "ble-gatt.c" "ble-gap.c" "ble.c"
+    INCLUDE_DIRS "include"
+    PRIV_REQUIRES nvm-driver bt
+)
 ```
 
-## 🚀 Usage
+## 🔑 Service UUIDs
 
-### Basic Example
-
-```c
-#include "ble.h"
-
-void app_main(void)
-{
-    // Initialize BLE with name "AIR-FRYER"
-    ble_init();
-
-    // The device is now visible and ready for connections
-}
-```
-
-### Initialization Flow
-
-1. **NVM Init**: Initialize non-volatile memory (required for BT)
-2. **BT Controller**: Configure and enable the Bluetooth controller
-3. **Bluedroid**: Initialize and enable the Bluedroid stack
-4. **GATTS Init**: Register the GATT Server event handler
-5. **GAP Init**: Configure advertising and GAP parameters
-6. **GATT Init**: Configure local MTU
-
-### Handled Events
-
-The component handles the following main events:
-
-#### GAP Events
-- `ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT`: Advertising data configured
-- `ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT`: Scan response configured
-- `ESP_GAP_BLE_ADV_START_COMPLETE_EVT`: Advertising started
-- `ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT`: Advertising stopped
-- `ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT`: Connection parameters updated
-
-#### GATTS Events
-- `ESP_GATTS_REG_EVT`: Application registered
-- `ESP_GATTS_CREATE_EVT`: Service created
-- `ESP_GATTS_ADD_CHAR_EVT`: Characteristic added
-- `ESP_GATTS_CONNECT_EVT`: Device connected
-- `ESP_GATTS_READ_EVT`: Characteristic read
-- `ESP_GATTS_WRITE_EVT`: Characteristic write
+| UUID | Name | Description |
+|------|------|-------------|
+| `0x00FF` | Air Fryer Service | Main GATT service |
+| `0xED58` | Advertising UUID | In advertising data |
+| `0xAFBD` | Scan Response UUID | In scan response |
+| `0xFF01-0xFF04` | Characteristics | User-defined characteristics |
 
 ## 👤 Author
 
@@ -225,7 +486,9 @@ Copyright (c) 2025 - All rights reserved.
 
 ---
 
-> **Note**: This component was developed for ESP32 using ESP-IDF. Make sure you have the development environment properly configured before compiling.
+> **Note**: This component was developed for ESP32 using ESP-IDF v5.x. Make sure you have the development environment properly configured before compiling.
 
 ## 📝 References
+
 - [ESP-IDF BLE GATT Server Documentation](https://github.com/espressif/esp-idf/blob/master/examples/bluetooth/bluedroid/ble/gatt_server/tutorial/Gatt_Server_Example_Walkthrough.md)
+- [Bluetooth Core Specification](https://www.bluetooth.com/specifications/specs/core-specification-5-3/)
