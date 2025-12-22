@@ -30,6 +30,13 @@
 #define MAX_MTU_SIZE         500
 #define GATTS_APP_ID         0
 
+// BLE Connection Parameters
+// Connection interval is in units of 1.25ms
+#define BLE_CONN_INTERVAL_MIN 0x20  // 32 * 1.25ms = 40ms minimum connection interval
+#define BLE_CONN_INTERVAL_MAX 0x40  // 64 * 1.25ms = 80ms maximum connection interval
+#define BLE_CONN_LATENCY      0     // No slave latency (connection events cannot be skipped)
+#define BLE_CONN_TIMEOUT      400   // 400 * 10ms = 4000ms supervision timeout
+
 // Calculate handles: service + (characteristics * handles_per_char)
 #define CALC_NUM_HANDLES(char_count) (SERVICE_HANDLE_COUNT + ((char_count) * HANDLES_PER_CHAR))
 
@@ -281,7 +288,8 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                ESP_BD_ADDR_HEX(param->connect.remote_bda));
 
       // Update connection parameters
-      ble_gap_update_connection_params(param->connect.remote_bda, 0x20, 0x40, 0, 400);
+      ble_gap_update_connection_params(param->connect.remote_bda, BLE_CONN_INTERVAL_MIN, BLE_CONN_INTERVAL_MAX,
+                                       BLE_CONN_LATENCY, BLE_CONN_TIMEOUT);
       break;
     }
 
