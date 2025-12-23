@@ -454,7 +454,7 @@ This component requires:
 
 - **ESP-IDF**: v5.0+ (Bluedroid stack)
 - **bt**: ESP-IDF Bluetooth component
-- **nvm-driver**: Non-Volatile Memory driver
+- **nvm-driver**: My own [open-source](https://github.com/PedroLuisDionisioFraga/esp32-nvm-driver) Non-Volatile Memory driver
 
 ### CMakeLists.txt
 
