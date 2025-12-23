@@ -36,4 +36,11 @@ esp_err_t ble_gatts_init(ble_characteristic_t *chars, size_t count, uint16_t ser
  */
 esp_err_t ble_gatts_deinit();
 
+/**
+ * @brief Check if a BLE client is currently connected
+ *
+ * @return true if connected, false otherwise
+ */
+bool ble_gatts_is_connected(void);
+
 #endif  // BLE_GATTS_H

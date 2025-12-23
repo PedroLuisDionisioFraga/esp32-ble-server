@@ -60,9 +60,6 @@ static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *p
 static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static ble_char_handle_t *find_char_by_handle(uint16_t handle);
 
-// External function to update connection state
-extern void ble_server_set_connected(bool connected);
-
 /**
  * @brief Initialize GATTS with user-defined characteristics
  */
@@ -273,7 +270,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     {
       s_conn_id = param->connect.conn_id;
       s_is_connected = true;
-      ble_server_set_connected(true);
 
       ESP_LOGI(GATTS_TAG,
                "Client connected, conn_id=%d, remote=" ESP_BD_ADDR_STR,
@@ -288,7 +284,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     case ESP_GATTS_DISCONNECT_EVT:
     {
       s_is_connected = false;
-      ble_server_set_connected(false);
 
       ESP_LOGI(GATTS_TAG, "Client disconnected, reason=0x%x", param->disconnect.reason);
 
@@ -452,4 +447,12 @@ static ble_char_handle_t *find_char_by_handle(uint16_t handle)
     }
   }
   return NULL;
+}
+
+/**
+ * @brief Check if a BLE client is currently connected
+ */
+bool ble_gatts_is_connected(void)
+{
+  return s_is_connected;
 }

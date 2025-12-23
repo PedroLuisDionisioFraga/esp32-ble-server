@@ -30,7 +30,6 @@ static const char *TAG = "BLE";
 
 // Server state
 static bool s_initialized = false;
-static bool s_connected = false;
 static const ble_server_config_t *s_config = NULL;
 
 /**
@@ -160,7 +159,6 @@ ble_return_code_t ble_server_stop()
   }
 
   s_initialized = false;
-  s_connected = false;
   s_config = NULL;
 
   ESP_LOGI(TAG, "BLE server stopped");
@@ -172,14 +170,5 @@ ble_return_code_t ble_server_stop()
  */
 bool ble_server_is_connected()
 {
-  return s_connected;
-}
-
-/**
- * @brief Internal function to update connection state (called by GATTS)
- */
-void ble_server_set_connected(bool connected)
-{
-  s_connected = connected;
-  ESP_LOGI(TAG, "Connection state: %s", connected ? "connected" : "disconnected");
+  return ble_gatts_is_connected();
 }
