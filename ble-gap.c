@@ -238,9 +238,7 @@ esp_err_t ble_gap_init(const char *device_name)
     return ret;
   }
 
-  uint16_t raw_adv_data_size = ble_gap_config_adv(RAW_ADV_DATA_SERVICE_UUID,
-                                                  device_name,
-                                                  strlen(device_name));  // Example service UUID and device name
+  uint16_t raw_adv_data_size = ble_gap_config_adv(RAW_ADV_DATA_SERVICE_UUID, device_name, strlen(device_name));
   ESP_LOGI(TAG_GAP, "Advertising data size: %d", raw_adv_data_size);
   ret = esp_ble_gap_config_adv_data_raw(s_raw_adv_data, raw_adv_data_size);
   if (ret)
@@ -320,6 +318,22 @@ esp_err_t ble_gap_update_connection_params(uint8_t *bda, uint16_t min_interval, 
     ESP_LOGE(TAG_GAP, "Updating connection parameters failed: %s", esp_err_to_name(ret));
     return ret;
   }
+
+  return ESP_OK;
+}
+
+esp_err_t ble_gap_stop_adv(void)
+{
+  esp_err_t ret = esp_ble_gap_stop_advertising();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG_GAP, "Stop advertising failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  // Free allocated resources
+  ble_gap_free_adv_data();
+  ble_free_scan_rsp_data();
 
   return ESP_OK;
 }

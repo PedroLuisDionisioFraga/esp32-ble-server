@@ -1,9 +1,9 @@
 /**
  * @file ble.c
  * @author Pedro Luis Dionísio Fraga (pedrodfraga@hotmail.com)
- * @brief Creates a BLE GATT server with a custom service and characteristic.
- * @version 0.1
- * @date 2025-06-19
+ * @brief BLE Server Implementation - Abstraction Layer over ESP-IDF BLE stack
+ * @version 0.2
+ * @date 2025-07-20
  *
  * @copyright Copyright (c) 2025
  *
@@ -23,54 +23,152 @@
 #include "ble-gap.h"
 #include "ble-gatt.h"
 #include "ble-gatts.h"
+#include "ble-return-code.h"
 #include "nvm_driver.h"
 
 static const char *TAG = "BLE";
 
-void ble_init()
+// Server state
+static bool s_initialized = false;
+static const ble_server_config_t *s_config = NULL;
+
+/**
+ * @brief Initialize and start the BLE GATT server
+ */
+ble_return_code_t ble_server_init(const ble_server_config_t *config)
 {
+  if (s_initialized)
+  {
+    ESP_LOGW(TAG, "BLE server already initialized");
+    return BLE_ALREADY_INITIALIZED;
+  }
+
+  if (config == NULL || config->device_name == NULL)
+  {
+    ESP_LOGE(TAG, "Invalid configuration");
+    return BLE_INVALID_CONFIG;
+  }
+
+  if (config->characteristics == NULL || config->characteristic_count == 0)
+  {
+    ESP_LOGE(TAG, "No characteristics defined");
+    return BLE_INVALID_CHARS;
+  }
+
+  s_config = config;
   esp_err_t ret;
 
-  // Initialize NVS
   nvm_init();
 
   ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   ret = esp_bt_controller_init(&bt_cfg);
-  if (ret)
+  if (ret != ESP_OK)
   {
-    ESP_LOGE(TAG, "Bluetooth controller initialization failed: %s", esp_err_to_name(ret));
-    return;
+    ESP_LOGE(TAG, "BT controller init failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
   }
 
   ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-  if (ret)
+  if (ret != ESP_OK)
   {
-    ESP_LOGE(TAG, "Bluetooth controller enable failed: %s", esp_err_to_name(ret));
-    return;
+    ESP_LOGE(TAG, "BT controller enable failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
   }
 
   ret = esp_bluedroid_init();
-  if (ret)
+  if (ret != ESP_OK)
   {
-    ESP_LOGE(TAG, "Bluedroid initialization failed: %s", esp_err_to_name(ret));
-    return;
+    ESP_LOGE(TAG, "Bluedroid init failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
   }
 
   ret = esp_bluedroid_enable();
-  if (ret)
+  if (ret != ESP_OK)
   {
     ESP_LOGE(TAG, "Bluedroid enable failed: %s", esp_err_to_name(ret));
-    return;
+    return BLE_GENERIC_ERROR;
   }
 
-  if (ble_gatts_init() != ESP_OK)
-    return;
-  if (ble_gap_init("AIR-FRYER") != ESP_OK)
-    return;
-  if (ble_gatt_init() != ESP_OK)
-    return;
+  ret = ble_gatts_init(config->characteristics, config->characteristic_count, config->service_uuid);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "GATTS init failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
 
-  ESP_LOGI(TAG, "BLE GATT server initialized successfully");
+  ret = ble_gap_init(config->device_name);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "GAP init failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
+
+  s_initialized = true;
+  ESP_LOGI(TAG, "BLE server initialized with %d characteristics", config->characteristic_count);
+
+  return BLE_SUCCESS;
+}
+
+/**
+ * @brief Stop the BLE server and release resources
+ */
+ble_return_code_t ble_server_stop()
+{
+  if (!s_initialized)
+  {
+    ESP_LOGW(TAG, "BLE server not initialized");
+    return BLE_NOT_INITIALIZED;
+  }
+
+  esp_err_t ret;
+
+  ret = ble_gap_stop_adv();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGW(TAG, "Failed to stop advertising: %s", esp_err_to_name(ret));
+  }
+
+  ret = esp_bluedroid_disable();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Bluedroid disable failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
+
+  ret = esp_bluedroid_deinit();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Bluedroid deinit failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
+
+  ret = esp_bt_controller_disable();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "BT controller disable failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
+
+  ret = esp_bt_controller_deinit();
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "BT controller deinit failed: %s", esp_err_to_name(ret));
+    return BLE_GENERIC_ERROR;
+  }
+
+  s_initialized = false;
+  s_config = NULL;
+
+  ESP_LOGI(TAG, "BLE server stopped");
+  return BLE_SUCCESS;
+}
+
+/**
+ * @brief Check if a BLE client is currently connected
+ */
+bool ble_server_is_connected()
+{
+  return ble_gatts_is_connected();
 }
