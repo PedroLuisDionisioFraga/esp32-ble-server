@@ -66,11 +66,12 @@ typedef ble_char_error_t (*ble_char_write_t)(const uint8_t *in_data, size_t len)
  */
 typedef struct
 {
-  uint16_t uuid;           ///< 16-bit UUID for the characteristic (e.g., 0xFF01)
-  const char *name;        ///< Human-readable name for debugging (e.g., "Temperature")
-  uint8_t size;            ///< Maximum data size in bytes (1, 2, 4, etc.)
-  ble_char_read_t read;    ///< Read handler (NULL = write-only characteristic)
-  ble_char_write_t write;  ///< Write handler (NULL = read-only characteristic)
+  uint16_t uuid;            ///< 16-bit UUID for the characteristic (e.g., 0xFF01)
+  const char *name;         ///< Human-readable name for debugging (e.g., "Temperature")
+  const char *description;  ///< User description for the characteristic (shown to BLE clients)
+  uint8_t size;             ///< Maximum data size in bytes (1, 2, 4, etc.)
+  ble_char_read_t read;     ///< Read handler (NULL = write-only characteristic)
+  ble_char_write_t write;   ///< Write handler (NULL = read-only characteristic)
 } ble_characteristic_t;
 
 /**

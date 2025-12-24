@@ -25,7 +25,7 @@
 
 // Constants
 #define MAX_CHARACTERISTICS  16
-#define HANDLES_PER_CHAR     2  // 1 for char declaration + 1 for char value
+#define HANDLES_PER_CHAR     3  // 1 for char declaration + 1 for char value + 1 for descriptor
 #define SERVICE_HANDLE_COUNT 1
 #define MAX_MTU_SIZE         500
 #define GATTS_APP_ID         0
@@ -38,6 +38,7 @@ typedef struct
 {
   uint16_t char_handle;       // Characteristic value handle
   uint16_t cccd_handle;       // CCCD handle (for notifications)
+  uint16_t descr_handle;      // User description handle
   ble_characteristic_t *def;  // Pointer to user definition
 } ble_char_handle_t;
 
@@ -53,12 +54,14 @@ static bool s_is_connected = false;
 // Handle tracking
 static ble_char_handle_t s_char_handles[MAX_CHARACTERISTICS];
 static size_t s_registered_chars = 0;
+static size_t s_pending_descr_char = 0;  // Index of char waiting for descriptor registration
 
 // Forward declarations
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static ble_char_handle_t *find_char_by_handle(uint16_t handle);
+static ble_char_handle_t *find_char_by_descr_handle(uint16_t handle);
 
 /**
  * @brief Initialize GATTS with user-defined characteristics
@@ -231,6 +234,91 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
                  s_characteristics[s_registered_chars].name,
                  param->add_char.attr_handle);
 
+        // Add User Description descriptor if description is provided
+        ble_characteristic_t *current_ch = &s_characteristics[s_registered_chars];
+        if (current_ch->description != NULL && current_ch->description[0] != '\0')
+        {
+          s_pending_descr_char = s_registered_chars;
+
+          esp_bt_uuid_t descr_uuid = {
+            .len = ESP_UUID_LEN_16,
+            .uuid.uuid16 = ESP_GATT_UUID_CHAR_DESCRIPTION,  // 0x2901 - Characteristic User Description
+          };
+
+          esp_attr_value_t descr_value = {
+            .attr_max_len = strlen(current_ch->description),
+            .attr_len = strlen(current_ch->description),
+            .attr_value = (uint8_t *)current_ch->description,
+          };
+
+          esp_err_t ret =
+            esp_ble_gatts_add_char_descr(s_service_handle, &descr_uuid, ESP_GATT_PERM_READ, &descr_value, NULL);
+          if (ret != ESP_OK)
+          {
+            ESP_LOGE(GATTS_TAG, "Add char descr failed: %s", esp_err_to_name(ret));
+          }
+          else
+          {
+            ESP_LOGI(GATTS_TAG, "Adding descriptor for '%s': \"%s\"", current_ch->name, current_ch->description);
+          }
+        }
+        else
+        {
+          // No descriptor, proceed to register characteristic and move to next
+          s_registered_chars++;
+
+          // Add next characteristic if available
+          if (s_registered_chars < s_char_count)
+          {
+            ble_characteristic_t *ch = &s_characteristics[s_registered_chars];
+
+            esp_gatt_char_prop_t props = 0;
+            if (ch->read != NULL)
+              props |= ESP_GATT_CHAR_PROP_BIT_READ;
+            if (ch->write != NULL)
+              props |= ESP_GATT_CHAR_PROP_BIT_WRITE;
+
+            esp_gatt_perm_t perms = 0;
+            if (ch->read != NULL)
+              perms |= ESP_GATT_PERM_READ;
+            if (ch->write != NULL)
+              perms |= ESP_GATT_PERM_WRITE;
+
+            esp_bt_uuid_t char_uuid = {
+              .len = ESP_UUID_LEN_16,
+              .uuid.uuid16 = ch->uuid,
+            };
+
+            esp_ble_gatts_add_char(s_service_handle, &char_uuid, perms, props, NULL, NULL);
+            ESP_LOGI(GATTS_TAG, "Adding characteristic '%s' (UUID: 0x%04X)", ch->name, ch->uuid);
+          }
+          else
+          {
+            ESP_LOGI(GATTS_TAG, "All %d characteristics registered", s_registered_chars);
+          }
+        }
+      }
+      break;
+    }
+
+    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+    {
+      if (param->add_char_descr.status != ESP_GATT_OK)
+      {
+        ESP_LOGE(GATTS_TAG, "Add char descriptor failed, status %d", param->add_char_descr.status);
+        return;
+      }
+
+      // Store descriptor handle
+      if (s_pending_descr_char < s_char_count)
+      {
+        s_char_handles[s_pending_descr_char].descr_handle = param->add_char_descr.attr_handle;
+
+        ESP_LOGI(GATTS_TAG,
+                 "Descriptor added for '%s' handle=%d",
+                 s_characteristics[s_pending_descr_char].name,
+                 param->add_char_descr.attr_handle);
+
         s_registered_chars++;
 
         // Add next characteristic if available
@@ -329,6 +417,54 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
  */
 static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
+  // First check if this is a descriptor read
+  ble_char_handle_t *ch_descr = find_char_by_descr_handle(param->read.handle);
+  if (ch_descr != NULL)
+  {
+    // This is a read request for a descriptor (User Description)
+    esp_gatt_rsp_t rsp = {0};
+    rsp.attr_value.handle = param->read.handle;
+
+    if (ch_descr->def->description != NULL)
+    {
+      size_t total_len = strlen(ch_descr->def->description);
+      uint16_t offset = param->read.offset;
+
+      // Handle long read with offset
+      if (offset >= total_len)
+      {
+        // All data has been sent
+        rsp.attr_value.len = 0;
+      }
+      else
+      {
+        size_t remaining = total_len - offset;
+        size_t to_send = remaining;
+        if (to_send > sizeof(rsp.attr_value.value))
+          to_send = sizeof(rsp.attr_value.value);
+
+        memcpy(rsp.attr_value.value, ch_descr->def->description + offset, to_send);
+        rsp.attr_value.len = to_send;
+        rsp.attr_value.offset = offset;
+
+        ESP_LOGI(GATTS_TAG,
+                 "Sending descriptor for '%s' (offset=%d, len=%d/%d)",
+                 ch_descr->def->name,
+                 offset,
+                 to_send,
+                 total_len);
+      }
+    }
+    else
+    {
+      rsp.attr_value.len = 0;
+    }
+
+    esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+    return;
+  }
+
+  // Check if this is a characteristic value read
   ble_char_handle_t *ch = find_char_by_handle(param->read.handle);
 
   if (ch == NULL)
@@ -439,9 +575,24 @@ static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *
  */
 static ble_char_handle_t *find_char_by_handle(uint16_t handle)
 {
-  for (size_t i = 0; i < s_registered_chars; i++)
+  for (size_t i = 0; i < s_char_count; i++)
   {
     if (s_char_handles[i].char_handle == handle)
+    {
+      return &s_char_handles[i];
+    }
+  }
+  return NULL;
+}
+
+/**
+ * @brief Find characteristic by descriptor handle
+ */
+static ble_char_handle_t *find_char_by_descr_handle(uint16_t handle)
+{
+  for (size_t i = 0; i < s_char_count; i++)
+  {
+    if (s_char_handles[i].descr_handle != 0 && s_char_handles[i].descr_handle == handle)
     {
       return &s_char_handles[i];
     }
