@@ -25,13 +25,9 @@
 
 // Constants
 #define MAX_CHARACTERISTICS  16
-#define HANDLES_PER_CHAR     3  // 1 for char declaration + 1 for char value + 1 for descriptor
 #define SERVICE_HANDLE_COUNT 1
 #define MAX_MTU_SIZE         500
 #define GATTS_APP_ID         0
-
-// Calculate handles: service + (characteristics * handles_per_char)
-#define CALC_NUM_HANDLES(char_count) (SERVICE_HANDLE_COUNT + ((char_count) * HANDLES_PER_CHAR))
 
 // Internal structure to track characteristic handles
 typedef struct
@@ -62,6 +58,36 @@ static void handle_char_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *p
 static void handle_char_write(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static ble_char_handle_t *find_char_by_handle(uint16_t handle);
 static ble_char_handle_t *find_char_by_descr_handle(uint16_t handle);
+static uint16_t calculate_num_handles(ble_characteristic_t *chars, size_t count);
+
+/**
+ * @brief Calculate the number of GATT handles needed for the service and characteristics
+ *
+ * Each service needs 1 handle.
+ * Each characteristic needs 2 handles (declaration + value).
+ * Each characteristic with a description needs an additional handle for the descriptor.
+ *
+ * @param chars Array of characteristic definitions
+ * @param count Number of characteristics
+ * @return Total number of handles needed
+ */
+static uint16_t calculate_num_handles(ble_characteristic_t *chars, size_t count)
+{
+  uint16_t num_handles = SERVICE_HANDLE_COUNT;  // Service handle
+
+  for (size_t i = 0; i < count; i++)
+  {
+    num_handles += 2;  // Characteristic declaration + value handle
+
+    // Add handle for user description descriptor if description is provided
+    if (chars[i].description != NULL && chars[i].description[0] != '\0')
+    {
+      num_handles += 1;
+    }
+  }
+
+  return num_handles;
+}
 
 /**
  * @brief Initialize GATTS with user-defined characteristics
@@ -163,7 +189,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
           },
       };
 
-      uint16_t num_handles = CALC_NUM_HANDLES(s_char_count);
+      uint16_t num_handles = calculate_num_handles(s_characteristics, s_char_count);
       esp_ble_gatts_create_service(gatts_if, &service_id, num_handles);
       break;
     }
